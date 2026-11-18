@@ -10,6 +10,7 @@ import 'package:analysis_server_plugin/registry.dart';
 import 'package:analysis_server_plugin/src/correction/ignore_diagnostic.dart';
 import 'package:analysis_server_plugin/src/plugin_server.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer/src/test_utilities/platform.dart';
 import 'package:analyzer/src/test_utilities/test_code_format.dart';
 import 'package:analyzer_plugin/protocol/protocol.dart' as protocol;
@@ -144,7 +145,9 @@ bool b = false;'''),
     newFile(filePath, 'bool b = false;');
     newFile(testFilePath, 'bool b = false;');
 
+    var paramsQueue = _analysisErrorsParams;
     await _setRoots();
+    await paramsQueue.take(2);
 
     await channel.sendRequest(
       protocol.AnalysisSetConfigurationsParams({
@@ -155,7 +158,6 @@ bool b = false;'''),
       }),
     );
 
-    var paramsQueue = _analysisErrorsParams;
     var params1 = await paramsQueue.next;
     var params2 = await paramsQueue.next;
 
@@ -175,7 +177,9 @@ bool b = false;'''),
     newFile(filePath, 'bool b = false;');
     newFile(testFilePath, 'bool b = false;');
 
+    var paramsQueue = _analysisErrorsParams;
     await _setRoots();
+    await paramsQueue.take(2);
 
     await channel.sendRequest(
       protocol.AnalysisSetConfigurationsParams({
@@ -192,7 +196,6 @@ bool b = false;'''),
       }),
     );
 
-    var paramsQueue = _analysisErrorsParams;
     var params1 = await paramsQueue.next;
     var params2 = await paramsQueue.next;
 
@@ -717,6 +720,21 @@ bool b2 = false;
       params.errors.single,
       message: 'Parsed only rule message',
     );
+
+    // With analyzer diagnostics cached, a parsed-only rule doesn't need AST
+    // resolution when a fresh context collection analyzes the same file.
+    var resolutions = 0;
+    testFineAfterLibraryAnalyzerHook = (_) => resolutions++;
+    addTearDown(() => testFineAfterLibraryAnalyzerHook = null);
+    await _setRoots();
+    params = await paramsQueue.next;
+    expect(params.errors, hasLength(1));
+    _expectAnalysisError(
+      params.errors.single,
+      message: 'Parsed only rule message',
+    );
+    await pluginServer.waitForIdle();
+    expect(resolutions, 0);
   }
 
   Future<void> test_partDiagnosticContextMessage() async {
@@ -779,6 +797,67 @@ C? c;
     var assist = details.assists.single;
     expect(assist.id, 'dart.fix.invertBoolean');
     expect(assist.message, 'Invert Boolean value');
+  }
+
+  Future<void>
+  test_resolvedLibrary_resolvesOnceWithAndWithoutCachedErrors() async {
+    writeAnalysisOptionsWithPlugin({'no_references_to_strings': 'enable'});
+    newFile(filePath, '''
+part 'test2.dart';
+String s = 'hello';
+''');
+    newFile(file2Path, '''
+part of 'test.dart';
+void f() => print(s);
+''');
+
+    var resolutions = 0;
+    testFineAfterLibraryAnalyzerHook = (_) => resolutions++;
+    addTearDown(() => testFineAfterLibraryAnalyzerHook = null);
+
+    var paramsQueue = _analysisErrorsParams;
+    // Each call creates a new collection. The second uses the cached analyzer
+    // diagnostics but still needs a resolved library for the plugin rule.
+    for (var pass = 0; pass < 2; pass++) {
+      resolutions = 0;
+      await _setRoots();
+      var libraryErrors = await paramsQueue.next;
+      var partErrors = await paramsQueue.next;
+      await pluginServer.waitForIdle();
+      expect(libraryErrors.file, filePath);
+      expect(libraryErrors.errors, isEmpty);
+      expect(partErrors.file, file2Path);
+      _expectAnalysisError(
+        partErrors.errors.single,
+        message: 'No references to Strings',
+      );
+      expect(resolutions, 1);
+    }
+  }
+
+  Future<void> test_resolvedLibrary_pendingChange_reportsDiagnostics() async {
+    writeAnalysisOptionsWithPlugin();
+    newFile(filePath, 'bool b = false;');
+    await channel.sendRequest(
+      protocol.AnalysisSetPriorityFilesParams([filePath]),
+    );
+
+    testFineAfterLibraryAnalyzerHook = (_) {
+      testFineAfterLibraryAnalyzerHook = null;
+      var unrelated = newFile(join(packagePath, 'lib', 'unrelated.dart'), '');
+      var driver = pluginServer.contextCollection!.contexts.single.driver;
+      driver.changeFile(unrelated.path);
+    };
+    addTearDown(() => testFineAfterLibraryAnalyzerHook = null);
+
+    var paramsQueue = _analysisErrorsParams;
+    await _setRoots();
+    var libraryErrors = await paramsQueue.next;
+    expect(libraryErrors.file, filePath);
+    _expectAnalysisError(
+      libraryErrors.errors.single,
+      message: 'No bools message',
+    );
   }
 
   Future<void> test_rulesHaveAccessToPackage() async {

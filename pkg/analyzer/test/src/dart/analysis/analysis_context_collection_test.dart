@@ -12,6 +12,7 @@ import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/dart/analysis/driver_based_analysis_context.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/dart/analysis/file_state.dart';
+import 'package:analyzer/src/dart/analysis/status.dart';
 import 'package:analyzer/src/generated/sdk.dart';
 import 'package:analyzer/src/test_utilities/mock_sdk.dart';
 import 'package:analyzer/src/util/file_paths.dart' as file_paths;
@@ -207,6 +208,53 @@ linter:
       ),
       throwsArgumentError,
     );
+  }
+
+  test_reportResolvedLibraries_onDemandPart() async {
+    var root = newFolder('/home/test');
+    var library = newFile('/home/test/lib/library.dart', "part 'part.dart';");
+    var part = newFile('/home/test/lib/part.dart', "part of 'library.dart';");
+
+    for (var reportResolvedLibraries in [false, true]) {
+      var collection = AnalysisContextCollectionImpl(
+        resourceProvider: resourceProvider,
+        includedPaths: [root.path],
+        sdkPath: sdkRoot.path,
+        drainStreams: false,
+        reportResolvedLibraries: reportResolvedLibraries,
+      );
+      addTearDown(collection.dispose);
+      var driver = collection.contextFor(library.path).driver;
+      var eventsFuture = collection.scheduler.events
+          .takeWhile((event) => event is! AnalysisStatusIdle)
+          .where(
+            (event) =>
+                event is ResolvedUnitResult || event is ResolvedLibraryResult,
+          )
+          .toList();
+
+      driver.priorityFiles2 = [part];
+      var partResult = await driver.getResolvedUnit2(part);
+      var events = await eventsFuture;
+      expect(events, [
+        isA<ResolvedUnitResult>().having(
+          (result) => result.path,
+          'path',
+          library.path,
+        ),
+        same(partResult),
+        if (reportResolvedLibraries) isA<ResolvedLibraryResult>(),
+      ]);
+
+      if (reportResolvedLibraries) {
+        var libraryResult = events.last as ResolvedLibraryResult;
+        expect(libraryResult.units, [same(events.first), same(partResult)]);
+        expect(
+          await driver.getResolvedLibrary(library.path),
+          same(libraryResult),
+        );
+      }
+    }
   }
 
   AnalysisContextCollectionImpl _newCollection({

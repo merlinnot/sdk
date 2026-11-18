@@ -36,6 +36,9 @@ class AnalysisContextCollectionImpl implements AnalysisContextCollection {
   final List<DriverBasedAnalysisContext> contexts = [];
 
   /// Initialize a newly created analysis context manager.
+  ///
+  /// If no [scheduler] is supplied, [reportResolvedLibraries] configures
+  /// whether the new scheduler reports complete resolved library results.
   new({
     ByteStore? byteStore,
     Map<String, String>? declaredVariables,
@@ -51,6 +54,7 @@ class AnalysisContextCollectionImpl implements AnalysisContextCollection {
     PerformanceLog? performanceLog,
     ResourceProvider? resourceProvider,
     bool retainDataForTesting = false,
+    bool reportResolvedLibraries = false,
     String? sdkPath,
     String? sdkSummaryPath,
     AnalysisDriverScheduler? scheduler,
@@ -67,7 +71,10 @@ class AnalysisContextCollectionImpl implements AnalysisContextCollection {
     performanceLog ??= PerformanceLog(null);
 
     if (scheduler == null) {
-      scheduler = AnalysisDriverScheduler(performanceLog);
+      scheduler = AnalysisDriverScheduler(
+        performanceLog,
+        reportResolvedLibraries: reportResolvedLibraries,
+      );
       if (drainStreams) {
         unawaited(scheduler.events.drain<void>());
       }

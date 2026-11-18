@@ -35,9 +35,7 @@ import 'package:analyzer/src/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/dart/analysis/driver_based_analysis_context.dart';
 import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
-import 'package:analyzer/src/dart/analysis/file_state.dart';
 import 'package:analyzer/src/dart/analysis/status.dart';
-import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/ignore_comments/ignore_info.dart';
 import 'package:analyzer/src/lint/config.dart';
@@ -93,11 +91,13 @@ class PluginServer {
   /// The recent state of analysis reults, to be cleared on file changes.
   final _recentState = <String, _PluginState>{};
 
-  /// The map of files currently being analyzed, mapped to their active session.
-  final _filesBeingAnalyzed = <String, AnalysisSession>{};
+  /// The most recent session analyzed by the plugins for each library path.
+  final _analyzedLibraries = <String, AnalysisSession>{};
 
-  /// The map of files currently being resolved, mapped to their active session.
-  final _filesBeingResolved = <String, AnalysisSession>{};
+  /// The last session in which cached diagnostics triggered a resolution request
+  /// for each library. Keep completed requests here so later diagnostics in
+  /// the same session do not request the library again.
+  final _lastResolutionRequestSessionByLibrary = <String, AnalysisSession>{};
 
   /// The next modification stamp for a changed file in the [_resourceProvider].
   int _overlayModificationStamp = 0;
@@ -658,6 +658,8 @@ class PluginServer {
       await eventsSubscription.cancel();
     }
 
+    _analyzedLibraries.clear();
+    _lastResolutionRequestSessionByLibrary.clear();
     var contextCollection = AnalysisContextCollectionImpl(
       resourceProvider: _resourceProvider,
       includedPaths: includedPaths,
@@ -673,12 +675,14 @@ class PluginServer {
             ..lint = false,
       withFineDependencies: true,
       drainStreams: false,
+      reportResolvedLibraries: true,
     );
     _contextCollection = contextCollection;
     _updatePriorityFiles();
     _eventsSubscription = contextCollection.scheduler.events.listen((event) {
-      if (event is ResolvedUnitResult) {
-        _handleResolvedUnit(event);
+      if (!identical(_contextCollection, contextCollection)) return;
+      if (event is ResolvedLibraryResult) {
+        _handleResolvedLibrary(event);
       } else if (event is AnalysisStatus) {
         _handleAnalysisStatus(event);
       } else if (event is ErrorsResult) {
@@ -1021,8 +1025,8 @@ class PluginServer {
     List<String> removedPaths = const [],
   }) async {
     if (_contextCollection case var contextCollection?) {
-      _filesBeingAnalyzed.clear();
-      _filesBeingResolved.clear();
+      _analyzedLibraries.clear();
+      _lastResolutionRequestSessionByLibrary.clear();
       await _forAnalysisContexts(contextCollection, (analysisContext) async {
         final driver = analysisContext.driver;
         for (var path in modifiedPaths) {
@@ -1051,17 +1055,14 @@ class PluginServer {
     if (!analysisContext.contextRoot.isAnalyzed(path)) return;
 
     var file = _resourceProvider.getFile(path);
-    var analysisOptions =
-        analysisContext.getAnalysisOptionsForFile(file) as AnalysisOptionsImpl;
+    var driver = analysisContext.driver;
+    var analysisOptions = driver.getAnalysisOptionsForFile(file);
+    var fileKind = driver.fsState.getFileForPath(path).kind;
+    var libraryPath = fileKind.library?.file.path;
     if (_canUseParsedResult(analysisOptions, path)) {
-      var fileState = analysisContext.driver.fsState.getFileForPath(path);
-      var libraryPath = switch (fileState.kind) {
-        PartFileKind(:var library?) => library.file.path,
-        _ => path,
-      };
       var diagnosticsContext = _LibraryDiagnosticsContext.forParsedLibrary(
         analysisContext,
-        libraryPath,
+        libraryPath ?? path,
         _resourceProvider,
       );
       if (diagnosticsContext != null) {
@@ -1073,10 +1074,10 @@ class PluginServer {
       }
       return;
     }
-    var activeSession = _filesBeingResolved[path];
-    if (activeSession != session) {
-      _filesBeingResolved[path] = session;
-      analysisContext.driver.getResolvedUnit(path);
+    if (libraryPath != null &&
+        _lastResolutionRequestSessionByLibrary[libraryPath] != session) {
+      _lastResolutionRequestSessionByLibrary[libraryPath] = session;
+      unawaited(_requestResolvedLibrary(analysisContext, libraryPath));
     }
   }
 
@@ -1114,41 +1115,42 @@ class PluginServer {
     );
   }
 
-  Future<void> _handleResolvedUnit(ResolvedUnitResult unitResult) async {
-    var analysisContext = unitResult.session.analysisContext;
-    if (!analysisContext.contextRoot.isAnalyzed(unitResult.path)) {
+  Future<void> _handleResolvedLibrary(
+    ResolvedLibraryResult libraryResult,
+  ) async {
+    var session = libraryResult.session;
+    var analysisContext = session.analysisContext;
+    // The driver can resolve an orphaned part as a synthetic library.
+    var definingUnit = libraryResult.units.first;
+    var path = definingUnit.path;
+    if (definingUnit.isPart ||
+        analysisContext is! DriverBasedAnalysisContext ||
+        !analysisContext.contextRoot.isAnalyzed(path) ||
+        _analyzedLibraries[path] == session) {
       return;
     }
-    if (unitResult.unit.declaredFragment !=
-        unitResult.libraryElement.firstFragment) {
+    var driver = analysisContext.driver;
+    if (driver.hasPendingFileChanges || session != driver.currentSession) {
+      // A change can arrive between resolution and delivery. Request a current
+      // result because the change may have left this library off the work queue.
+      unawaited(_requestResolvedLibrary(analysisContext, path));
       return;
     }
-    var session = unitResult.session;
-    var activeSession = _filesBeingAnalyzed[unitResult.path];
-    if (activeSession == session) {
-      return;
-    }
-    _filesBeingAnalyzed[unitResult.path] = session;
+    _analyzedLibraries[path] = session;
     try {
-      var file = _resourceProvider.getFile(unitResult.path);
-      var analysisOptions = analysisContext.getAnalysisOptionsForFile(file);
-      var libraryResult = await analysisContext.currentSession
-          .getResolvedLibrary(unitResult.path);
-      if (libraryResult is! ResolvedLibraryResult) return;
-
       var diagnosticsContext = _LibraryDiagnosticsContext.forResolvedLibrary(
         analysisContext,
         libraryResult,
       );
-      if (diagnosticsContext != null) {
-        await _analyzeAndSendDiagnostics(
-          analysisContext: analysisContext,
-          analysisOptions: analysisOptions as AnalysisOptionsImpl,
-          diagnosticsContext: diagnosticsContext,
-        );
-      }
+      await _analyzeAndSendDiagnostics(
+        analysisContext: analysisContext,
+        analysisOptions: driver.getAnalysisOptionsForFile(definingUnit.file),
+        diagnosticsContext: diagnosticsContext,
+      );
     } on InconsistentAnalysisException {
-      // State changed during resolution; a subsequent pass will handle it.
+      if (driver.hasPendingFileChanges || session != driver.currentSession) {
+        unawaited(_requestResolvedLibrary(analysisContext, path));
+      }
     }
   }
 
@@ -1165,6 +1167,25 @@ class PluginServer {
         ),
       ).toNotification(),
     );
+  }
+
+  Future<void> _requestResolvedLibrary(
+    DriverBasedAnalysisContext analysisContext,
+    String path,
+  ) async {
+    var contextCollection = _contextCollection;
+    if (contextCollection == null ||
+        !contextCollection.contexts.contains(analysisContext) ||
+        !_resourceProvider.getFile(path).exists) {
+      return;
+    }
+    var result = await analysisContext.driver.getResolvedLibrary(path);
+    if (identical(_contextCollection, contextCollection) &&
+        result is ResolvedLibraryResult) {
+      // An in-memory result does not emit a stream event. Fresh results can
+      // arrive either way and are deduplicated by _handleResolvedLibrary.
+      await _handleResolvedLibrary(result);
+    }
   }
 
   PluginConfiguration _toAnalyzerConfiguration(
@@ -1310,44 +1331,33 @@ final class _LibraryDiagnosticsContext {
   }
 
   /// Builds a diagnostics context using a resolved library.
-  static _LibraryDiagnosticsContext? forResolvedLibrary(
+  static _LibraryDiagnosticsContext forResolvedLibrary(
     AnalysisContext analysisContext,
     ResolvedLibraryResult libraryResult,
   ) {
     var allUnits = <RuleContextUnit>[];
     var diagnosticListeners = <RuleContextUnit, RecordingDiagnosticListener>{};
-    RuleContextUnit? definingContextUnit;
-    var definingUnit =
-        (libraryResult.element as LibraryElementImpl).firstFragment;
+    var definingSource = libraryResult.element.firstFragment.source;
 
     for (var unitResult in libraryResult.units) {
       var listener = RecordingDiagnosticListener();
       var contextUnit = RuleContextUnit(
         file: unitResult.file,
         content: unitResult.content,
-        diagnosticReporter: DiagnosticReporter(
-          listener,
-          unitResult.libraryElement.firstFragment.source,
-        ),
+        diagnosticReporter: DiagnosticReporter(listener, definingSource),
         unit: unitResult.unit,
       );
       diagnosticListeners[contextUnit] = listener;
       allUnits.add(contextUnit);
-      if (unitResult.unit.declaredFragment == definingUnit) {
-        definingContextUnit = contextUnit;
-      }
     }
-    definingContextUnit ??= allUnits.firstOrNull;
-    if (definingContextUnit == null) return null;
 
-    var definingPath = libraryResult.element.firstFragment.source.fullName;
     var package = analysisContext.contextRoot.workspace.findPackageFor(
-      definingPath,
+      definingSource.fullName,
     );
     return _LibraryDiagnosticsContext._(
       ruleContext: RuleContextWithResolvedResults(
         allUnits,
-        definingContextUnit,
+        allUnits.first,
         libraryResult.element.typeProvider,
         libraryResult.element.typeSystem as TypeSystemImpl,
         package,

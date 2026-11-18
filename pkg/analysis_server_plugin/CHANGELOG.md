@@ -1,5 +1,6 @@
 ## 0.3.27-dev
 
+- Reuse resolved libraries from the analyzer when computing plugin diagnostics.
 - Require version `14.8.0-dev` of the `analyzer` package.
 - Require version `0.14.21-dev` of the `analyzer_plugin` package.
 
