@@ -227,13 +227,9 @@ class ImportsVerifier {
         var firstSet = tracker.elementsOf2(firstElement);
         var secondSet = tracker.elementsOf2(secondElement);
 
-        // The second must provide all elements of the first.
-        if (!secondSet.containsAll(firstSet)) {
-          continue;
-        }
-
-        // The second must provide strictly more than the first.
-        if (!(secondSet.length > firstSet.length)) {
+        // Only a strict superset makes the first import unnecessary.
+        if (secondSet.length <= firstSet.length ||
+            !secondSet.containsAll(firstSet)) {
           continue;
         }
 
