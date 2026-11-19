@@ -264,24 +264,21 @@ class ImportsTrackingOfPrefix {
 
     // SAFETY: the scope adds only imports with libraries.
     var importedLibrary = import.importedLibrary!;
-    var elementFactory = importedLibrary.internal.elementFactory;
-
-    for (var entry in importedLibrary.exportEntries) {
-      var element = elementFactory.elementOfReference3(entry.reference);
-
-      // Check only accessed elements.
-      if (!accessedElements.contains(element)) {
-        continue;
+    var index = importedLibrary.sharedExportIndex;
+    for (var element in accessedElements) {
+      // A getter and a setter can have the same display name.
+      for (
+        var export = index._byName[element.displayName];
+        export != null;
+        export = export.next
+      ) {
+        if (export.element == element &&
+            importedLibrary.isFromDeprecatedExport(export.entry)) {
+          result ??= accessedElements.toSet();
+          result.remove(element);
+          break;
+        }
       }
-
-      // We want to exclude only deprecated exports.
-      if (!importedLibrary.isFromDeprecatedExport(entry)) {
-        continue;
-      }
-
-      // OK, we have to clone the set, and remove the element.
-      result ??= accessedElements.toSet();
-      result.remove(element);
     }
 
     result ??= accessedElements;

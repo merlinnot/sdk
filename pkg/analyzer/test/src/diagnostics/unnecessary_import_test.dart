@@ -284,6 +284,27 @@ void f() {
 ''');
   }
 
+  test_library_hasDeprecatedExport_getterAndSetter() async {
+    newFile('$testPackageLibPath/getter.dart', 'int get value => 0;');
+    newFile('$testPackageLibPath/setter.dart', 'set value(int x) {}');
+    newFile('$testPackageLibPath/barrel.dart', r'''
+export 'getter.dart';
+@deprecated
+export 'setter.dart';
+class A {}
+''');
+    await resolveTestCodeWithDiagnostics(r'''
+import 'barrel.dart';
+import 'getter.dart';
+//     ^^^^^^^^^^^^^
+// [diag.unnecessaryImport] The import of 'getter.dart' is unnecessary because all of the used elements are also provided by the import of 'barrel.dart'.
+import 'setter.dart';
+void f(A a) {
+  value = value + 1;
+}
+''');
+  }
+
   test_library_hasDeprecatedExport_hasNotDeprecatedImport_hasOtherClass() async {
     newFile('$testPackageLibPath/a.dart', r'''
 class A {}
