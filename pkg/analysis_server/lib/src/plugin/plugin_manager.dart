@@ -201,10 +201,13 @@ class PluginManager {
   /// method.
   ///
   /// Specify whether this is a legacy plugin with [isLegacyPlugin].
+  /// If provided, [configurations] are sent before the roots on startup so the
+  /// plugin can create its first analysis context collection with them.
   Future<void> addPluginToContextRoot(
     analyzer.ContextRoot contextRoot,
     String path, {
     required bool isLegacyPlugin,
+    AnalysisSetConfigurationsParams? configurations,
   }) async {
     while (_startingPlugins[path] != null) {
       await _startingPlugins[path]!.future;
@@ -212,6 +215,9 @@ class PluginManager {
     var pluginIsolate = _pluginMap[path];
     if (pluginIsolate != null) {
       pluginIsolate.addContextRoot(contextRoot);
+      if (configurations != null) {
+        pluginIsolate.sendRequest(configurations);
+      }
       return;
     }
 
@@ -268,6 +274,9 @@ class PluginManager {
 
       _notifyPluginsChanged();
 
+      if (configurations != null) {
+        pluginIsolate.sendRequest(configurations);
+      }
       if (!isLegacyPlugin && _analysisSetAnalysisRootsParams != null) {
         pluginIsolate.setAnalysisRoots(_analysisSetAnalysisRootsParams!);
       }

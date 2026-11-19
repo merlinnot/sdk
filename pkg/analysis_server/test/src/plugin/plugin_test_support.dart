@@ -5,6 +5,7 @@
 import 'dart:io' as io;
 
 import 'package:analyzer/file_system/physical_file_system.dart';
+import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as path;
 
 import '../../mocks.dart';
@@ -13,14 +14,14 @@ import '../../support/sdk_paths.dart';
 /// A superclass for test classes that define tests that require plugins to be
 /// created on disk.
 abstract class PluginTestSupport {
-  /// The default content of the plugin. This is a minimal plugin that will only
-  /// respond correctly to version checks and to shutdown requests.
+  /// The default content of the plugin. This is a minimal plugin that
+  /// acknowledges context roots without analyzing them.
   static const _defaultPluginContent = r'''
-import 'dart:async';
 import 'dart:isolate';
+
+import 'package:analyzer/dart/analysis/analysis_context.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/file_system/physical_file_system.dart';
-import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer_plugin/plugin/plugin.dart';
 import 'package:analyzer_plugin/protocol/protocol_generated.dart';
 import 'package:analyzer_plugin/starter.dart';
@@ -32,7 +33,7 @@ void main(List<String> args, SendPort sendPort) {
 }
 
 class MinimalPlugin extends ServerPlugin {
-  MinimalPlugin(ResourceProvider provider) : super(provider);
+  MinimalPlugin(ResourceProvider provider) : super(resourceProvider: provider);
 
   @override
   List<String> get fileGlobsToAnalyze => <String>['**/*.dart'];
@@ -44,7 +45,15 @@ class MinimalPlugin extends ServerPlugin {
   String get version => '0.0.1';
 
   @override
-  AnalysisDriverGeneric createAnalysisDriver(ContextRoot contextRoot) => null;
+  Future<void> analyzeFile({
+    required AnalysisContext analysisContext,
+    required String path,
+  }) async {}
+
+  @override
+  Future<AnalysisSetContextRootsResult> handleAnalysisSetContextRoots(
+      AnalysisSetContextRootsParams parameters) async =>
+    new AnalysisSetContextRootsResult();
 
   @override
   Future<AnalysisHandleWatchEventsResult> handleAnalysisHandleWatchEvents(
@@ -72,7 +81,7 @@ class MinimalPlugin extends ServerPlugin {
   /// ```
   /// <pluginDirectory>
   ///   .dart_tool/
-  ///     package_config.dart
+  ///     package_config.json
   ///   bin/
   ///     plugin.dart
   /// ```
@@ -90,15 +99,9 @@ class MinimalPlugin extends ServerPlugin {
     var tempDirectory = io.Directory.systemTemp.createTempSync(pluginName);
     try {
       var pluginPath = tempDirectory.resolveSymbolicLinksSync();
-      // Create a package config file.
-      var pluginDartToolPath = path.join(pluginPath, '.dart_tool');
-      io.Directory(pluginDartToolPath).createSync();
-      var packageConfigFile = io.File(
-        path.join(pluginDartToolPath, 'package_config.json'),
-      );
-      packageConfigFile.writeAsStringSync(
-        io.File(sdkPackageConfigPath).readAsStringSync(),
-      );
+      // Resolve package roots against the SDK config before relocating them.
+      var config = await loadPackageConfig(io.File(sdkPackageConfigPath));
+      await savePackageConfig(config, tempDirectory);
       //
       // Create the 'bin' directory.
       //

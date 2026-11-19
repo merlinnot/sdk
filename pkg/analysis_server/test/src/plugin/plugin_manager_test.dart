@@ -6,15 +6,18 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:analysis_server/src/plugin/plugin_manager.dart';
+import 'package:analysis_server/src/session_logger/process_id.dart';
 import 'package:analysis_server/src/session_logger/session_logger.dart';
+import 'package:analysis_server/src/session_logger/session_logger_sink.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/instrumentation/instrumentation.dart';
 import 'package:analyzer/src/context/packages.dart';
 import 'package:analyzer/src/dart/analysis/context_root.dart';
 import 'package:analyzer/src/util/file_paths.dart' as file_paths;
 import 'package:analyzer/src/workspace/basic.dart';
-import 'package:analyzer_plugin/protocol/protocol_generated.dart'
-    hide ContextRoot;
+import 'package:analyzer_plugin/protocol/protocol_common.dart';
+import 'package:analyzer_plugin/protocol/protocol_generated.dart';
+import 'package:analyzer_plugin/src/protocol/protocol_internal.dart';
 import 'package:analyzer_testing/resource_provider_mixin.dart';
 import 'package:analyzer_testing/utilities/extensions/resource_provider.dart';
 import 'package:path/path.dart' as path;
@@ -75,6 +78,76 @@ class PluginManagerFromDiskTest extends PluginTestSupport {
       },
     );
     pkg1Dir.deleteSync(recursive: true);
+  }
+
+  Future<void> test_addPluginToContextRoot_configuresBeforeRoots() async {
+    var sessionLogger = manager.sessionListener as SessionLogger;
+    var log = sessionLogger.sink as SessionLoggerInMemorySink;
+    log.startCapture();
+
+    await withPlugin(
+      test: (pluginPath) async {
+        var root = _newContextRoot(path.join(pluginPath, 'project'));
+        var filePath = path.join(root.root.path, 'main.dart');
+        var overlay = AnalysisUpdateContentParams({
+          filePath: AddContentOverlay('void main() {}'),
+        });
+        var configurations = AnalysisSetConfigurationsParams({
+          root.root.path: {
+            'test': PluginConfiguration(true, {'test_rule': 'warning'}),
+          },
+        });
+        manager.setAnalysisUpdateContentParams(overlay);
+        try {
+          await manager.addPluginToContextRoot(
+            root,
+            pluginPath,
+            isLegacyPlugin: false,
+            configurations: configurations,
+          );
+          var isolate = manager.pluginIsolates.single;
+          expect(isolate.exception, isNull);
+
+          var secondRoot = _newContextRoot(path.join(pluginPath, 'other'));
+          var updatedConfigurations = AnalysisSetConfigurationsParams({
+            secondRoot.root.path: {'test': PluginConfiguration(false, {})},
+          });
+          await manager.addPluginToContextRoot(
+            secondRoot,
+            pluginPath,
+            isLegacyPlugin: false,
+            configurations: updatedConfigurations,
+          );
+
+          // The fixture is a legacy plugin that does not support
+          // configurations. Its unknown request responses must be harmless.
+          var session = isolate.currentSession!;
+          var response = await session.sendRequest(
+            AnalysisSetPriorityFilesParams([]),
+          );
+          expect(response.error, isNull);
+          expect(session.pendingRequests, isEmpty);
+          expect(isolate.exception, isNull);
+
+          var firstContext = ContextRoot(root.root.path, []);
+          var secondContext = ContextRoot(secondRoot.root.path, []);
+          _expectPluginRequestsInOrder(log, [
+            configurations,
+            AnalysisSetContextRootsParams([firstContext]),
+            AnalysisSetAnalysisRootsParams([firstContext.root], []),
+            overlay,
+            AnalysisSetContextRootsParams([firstContext, secondContext]),
+            AnalysisSetAnalysisRootsParams([
+              firstContext.root,
+              secondContext.root,
+            ], []),
+            updatedConfigurations,
+          ]);
+        } finally {
+          await manager.stopAll();
+        }
+      },
+    );
   }
 
   @SkippedTest(
@@ -375,6 +448,25 @@ class PluginManagerFromDiskTest extends PluginTestSupport {
       },
     );
     pkg1Dir.deleteSync(recursive: true);
+  }
+
+  void _expectPluginRequestsInOrder(
+    SessionLoggerInMemorySink log,
+    List<RequestParams> expectedParams,
+  ) {
+    // The session assigns request IDs at runtime.
+    var expected = expectedParams
+        .map((params) => params.toRequest(''))
+        .toList();
+    var methods = expected.map((request) => request.method).toSet();
+    var actual = [
+      for (var entry in log.capturedEntries)
+        if (entry.isMessage &&
+            entry.sender == ProcessId.server &&
+            methods.contains(entry.message.method))
+          {...entry.message.map, 'id': ''},
+    ];
+    expect(actual, expected.map((request) => request.toJson()));
   }
 
   ContextRootImpl _newContextRoot(String root) {

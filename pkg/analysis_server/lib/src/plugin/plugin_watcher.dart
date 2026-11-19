@@ -326,19 +326,16 @@ class PluginWatcher implements DriverWatcher {
         groupProtocolConfigurations[dirPath] = pluginMap;
       }
 
-      unawaited(() async {
-        await manager.addPluginToContextRoot(
+      unawaited(
+        manager.addPluginToContextRoot(
           contextRoot,
           sharedPluginFolder.path,
           isLegacyPlugin: false,
-        );
-        var pluginIsolate = manager.pluginIsolates
-            .where((e) => e.pluginId == sharedPluginFolder.path)
-            .firstOrNull;
-        pluginIsolate?.sendRequest(
-          protocol.AnalysisSetConfigurationsParams(groupProtocolConfigurations),
-        );
-      }());
+          configurations: protocol.AnalysisSetConfigurationsParams(
+            groupProtocolConfigurations,
+          ),
+        ),
+      );
     }
     return true;
   }

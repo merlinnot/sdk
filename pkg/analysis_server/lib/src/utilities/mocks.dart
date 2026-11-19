@@ -323,10 +323,15 @@ class TestPluginManager(final ResourceProvider resourceProvider)
     analyzer.ContextRoot contextRoot,
     String path, {
     required bool isLegacyPlugin,
+    plugin.AnalysisSetConfigurationsParams? configurations,
   }) async {
     contextRootPlugins.putIfAbsent(contextRoot, () => []).add(path);
     if (!isLegacyPlugin) {
-      pluginIsolates.add(TestPluginIsolate(path));
+      var isolate = TestPluginIsolate(path);
+      if (configurations != null) {
+        isolate.sendRequest(configurations);
+      }
+      pluginIsolates.add(isolate);
     }
   }
 
