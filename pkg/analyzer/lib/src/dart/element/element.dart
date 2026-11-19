@@ -6922,8 +6922,20 @@ class LibraryElementImpl extends ElementImpl
   @trackedIndirectly
   late TypeSystemImpl typeSystem;
 
+  SharedExportIndex? _sharedExportIndex;
+  late List<ExportEntry> _exportEntries;
+
   @trackedInternal
-  late List<ExportEntry> exportEntries;
+  SharedExportIndex get sharedExportIndex =>
+      _sharedExportIndex ??= SharedExportIndex(this);
+
+  @trackedInternal
+  List<ExportEntry> get exportEntries => _exportEntries;
+
+  set exportEntries(List<ExportEntry> entries) {
+    _sharedExportIndex = null;
+    _exportEntries = entries;
+  }
 
   /// The union of names for all searchable elements in this library.
   @trackedInternal
@@ -7714,6 +7726,7 @@ class LibraryElementImpl extends ElementImpl
 
   @trackedInternal
   void resetScope() {
+    _sharedExportIndex = null;
     _libraryDeclarations = null;
     for (var fragment in fragments) {
       fragment._scope = null;

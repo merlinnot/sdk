@@ -9,6 +9,7 @@ import 'package:analyzer/dart/element/scope.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/fine/requirements.dart';
 import 'package:analyzer/src/summary2/combinator.dart';
+import 'package:analyzer/src/summary2/export.dart';
 import 'package:analyzer/src/utilities/extensions/collection.dart';
 import 'package:analyzer/src/utilities/extensions/string.dart';
 
@@ -622,6 +623,34 @@ class LocalScope extends EnclosedScope {
   }
 }
 
+/// The export names of one library, shared by all importing scopes.
+class SharedExportIndex {
+  final _byName = <String, _SharedExport>{};
+  final _extensions = <_SharedExport>[];
+
+  new(LibraryElementImpl library) {
+    var factory = library.internal.elementFactory;
+    // Preserve export order if multiple entries have the same display name.
+    for (var entry in library.exportEntries.reversed) {
+      var element = factory.elementOfReference3(entry.reference);
+      var id = element.displayName;
+      var export = _SharedExport(entry, element, _byName[id]);
+      _byName[id] = export;
+      if (element is ExtensionElement) {
+        _extensions.add(export);
+      }
+    }
+  }
+}
+
+class _SharedExport {
+  final ExportEntry entry;
+  final Element element;
+  final _SharedExport? next;
+
+  new(this.entry, this.element, this.next);
+}
+
 class PrefixScope implements Scope {
   final LibraryFragmentImpl libraryFragment;
 
@@ -648,6 +677,10 @@ class PrefixScope implements Scope {
   /// [parent] is read, we record this requirement.
   final List<PrefixScope> _parentSearchedScopes;
 
+  final _sources =
+      <(LibraryElementImpl, SharedExportIndex, List<Combinator>)>[];
+  final _lookedUpNames = <String>{};
+
   final List<LibraryImportImpl> _importElements = [];
   final List<LibraryElementImpl> _importedLibraries = [];
 
@@ -670,7 +703,6 @@ class PrefixScope implements Scope {
     required List<LibraryImportImpl> libraryImports,
     required PrefixElement? prefix,
   }) : _prefixElement = prefix {
-    var elementFactory = libraryElement.session.elementFactory;
     for (var import in libraryImports) {
       var importedUri = import.uri;
       if (importedUri is DirectiveUriWithLibraryImpl &&
@@ -679,12 +711,11 @@ class PrefixScope implements Scope {
         var importedLibrary = importedUri.library;
         _importedLibraries.add(importedLibrary);
         var combinators = import.combinators.build();
-        for (var entry in importedLibrary.exportEntries) {
-          if (combinators.allows(entry.name)) {
-            var element = elementFactory.elementOfReference3(entry.reference);
-            if (_shouldAdd(importedLibrary, element)) {
-              _add(element, importedLibrary.isFromDeprecatedExport(entry));
-            }
+        var exports = importedLibrary.sharedExportIndex;
+        _sources.add((importedLibrary, exports, combinators));
+        for (var extension in exports._extensions.reversed) {
+          if (combinators.allows(extension.entry.name)) {
+            _extensions.add(extension.element as ExtensionElement);
           }
         }
         if (import.prefix case var importPrefix?) {
@@ -775,6 +806,7 @@ class PrefixScope implements Scope {
 
     _recordLookupRequirement(id);
 
+    _ensureName(id);
     var getter = _getters[id];
     var setter = _setters[id];
     if (getter != null || setter != null) {
@@ -867,7 +899,24 @@ class PrefixScope implements Scope {
   /// Unlike [lookup], this is not a use of an import, so it is not tracked,
   /// and does not record a requirement.
   bool _importsName(String id) {
+    _ensureName(id);
     return _getters.containsKey(id) || _setters.containsKey(id);
+  }
+
+  void _ensureName(String id) {
+    if (!_lookedUpNames.add(id)) return;
+    for (var (library, exports, combinators) in _sources) {
+      for (
+        var export = exports._byName[id];
+        export != null;
+        export = export.next
+      ) {
+        if (combinators.allows(export.entry.name) &&
+            _shouldAdd(library, export.element)) {
+          _add(export.element, library.isFromDeprecatedExport(export.entry));
+        }
+      }
+    }
   }
 
   Element _merge(Element existing, Element other) {
