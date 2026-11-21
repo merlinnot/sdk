@@ -329,7 +329,7 @@ class FileResolver {
     return logger.runAsync('Get errors for $path', () async {
       var fileContext = getFileContext(path: path, performance: performance!);
       var file = fileContext.file;
-      var kind = file.kind.library ?? file.kind.asLibrary;
+      var kind = file.kind.libraryForAnalysis;
 
       var errorsSignatureBuilder = ApiSignature();
       errorsSignatureBuilder.addString(kind.libraryCycle.apiSignature);
@@ -466,7 +466,7 @@ class FileResolver {
 
     var fileContext = getFileContext(path: path, performance: performance);
     var file = fileContext.file;
-    var libraryKind = file.kind.library ?? file.kind.asLibrary;
+    var libraryKind = file.kind.libraryForAnalysis;
 
     // Load the library, link if necessary.
     libraryContext!.load(targetLibrary: libraryKind, performance: performance);
@@ -523,7 +523,7 @@ class FileResolver {
       var fileContext = getFileContext(path: path, performance: performance!);
       var file = fileContext.file;
 
-      var libraryKind = file.kind.library ?? file.kind.asLibrary;
+      var libraryKind = file.kind.libraryForAnalysis;
       var libraryFile = libraryKind.file;
 
       var libraryResult = await resolveLibrary2(
@@ -557,7 +557,7 @@ class FileResolver {
     return logger.runAsync('Resolve $path', () async {
       var fileContext = getFileContext(path: path, performance: performance!);
       var file = fileContext.file;
-      var libraryKind = file.kind.library ?? file.kind.asLibrary;
+      var libraryKind = file.kind.libraryForAnalysis;
 
       var lineOffset = file.lineInfo.getOffsetOfLine(completionLine);
       var completionOffset = lineOffset + completionColumn;
@@ -628,7 +628,7 @@ class FileResolver {
     return logger.runAsync('Resolve $path', () async {
       var fileContext = getFileContext(path: path, performance: performance!);
       var file = fileContext.file;
-      var libraryKind = file.kind.library ?? file.kind.asLibrary;
+      var libraryKind = file.kind.libraryForAnalysis;
 
       _loadLibraryAndDocLibraryImports(
         libraryKind: libraryKind,

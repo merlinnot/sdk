@@ -27,6 +27,11 @@ class OverlayResourceProvider implements ResourceProvider {
   /// the given [baseProvider].
   new(this.baseProvider);
 
+  /// A snapshot of the unsaved contents for analysis in another isolate.
+  Map<String, String> get overlayContents => {
+    for (var entry in _overlays.entries) entry.key: entry.value.content,
+  };
+
   @override
   pathos.Context get pathContext => baseProvider.pathContext;
 

@@ -7,6 +7,7 @@ library;
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:isolate';
 
 import 'package:analysis_server/src/plugin/notification_manager.dart';
 import 'package:analysis_server/src/plugin/plugin_manager.dart';
@@ -76,6 +77,8 @@ class PluginIsolate {
 
   bool isLegacy;
 
+  final SendPort? linkedSummaryPort;
+
   /// The analysis roots which have been specified by the client. These may be
   /// subdirectories of the context roots.
   AnalysisSetAnalysisRootsParams? _analysisRoots;
@@ -87,6 +90,7 @@ class PluginIsolate {
     this._notificationManager,
     this.sessionListener, {
     required this.isLegacy,
+    this.linkedSummaryPort,
   }) {
     // TODO(srawlins): Also print to stdout if this is `dart analyze` or
     // `flutter analyze`.
@@ -311,6 +315,7 @@ class PluginIsolate {
       Uri.file(packageConfigPath!, windows: platform.isWindows),
       _instrumentationService,
       sessionListener,
+      linkedSummaryPort: linkedSummaryPort,
     );
   }
 
