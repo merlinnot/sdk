@@ -82,6 +82,9 @@ class PluginIsolateChannel implements PluginCommunicationChannel {
   /// The port used to send notifications and responses to the server.
   final SendPort _sendPort;
 
+  /// Transport-only fields offered with the initial version check.
+  Map<String, Object>? startupCapabilities;
+
   /// The port used to receive requests from the server.
   late final ReceivePort _receivePort;
 
@@ -110,6 +113,9 @@ class PluginIsolateChannel implements PluginCommunicationChannel {
     void onData(data) {
       var requestMap = data as Map<String, Object>;
       var request = Request.fromJson(requestMap);
+      if (request.method == 'plugin.versionCheck') {
+        startupCapabilities = requestMap;
+      }
       onRequest(request);
     }
 

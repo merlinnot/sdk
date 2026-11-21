@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:analyzer/src/dart/analysis/file_byte_store.dart';
@@ -9,6 +10,25 @@ import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 main() {
+  test('a separate reader sees each completed synchronous write', () async {
+    var dir = Directory.systemTemp.createTempSync('analyzer-byte-store-');
+    try {
+      var producer = FileByteStore(dir.path, synchronousWrites: true);
+      var reader = FileByteStore(dir.path);
+      var key = 'ab.linked';
+      producer.putGet(key, Uint8List.fromList([1, 3]));
+      expect(reader.get(key), [1, 3]);
+      var held = reader.get(key)!;
+      producer.putGet(key, Uint8List.fromList([7]));
+      expect(reader.get(key), [7]);
+      expect(held, [1, 3]);
+      await producer.flush();
+      expect(producer.pendingWriteCount, 0);
+      expect(producer.failedWriteCount, 0);
+    } finally {
+      dir.deleteSync(recursive: true);
+    }
+  });
   defineReflectiveSuite(() {
     defineReflectiveTests(FileByteStoreValidatorTest);
   });

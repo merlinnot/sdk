@@ -6,6 +6,7 @@
 library;
 
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:analysis_server_plugin/edit/assist/assist.dart';
 import 'package:analysis_server_plugin/edit/assist/dart_assist_context.dart';
@@ -33,9 +34,11 @@ import 'package:analyzer/src/analysis_options/analysis_options.dart';
 import 'package:analyzer/src/analysis_rule/rule_context.dart';
 import 'package:analyzer/src/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
+import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer/src/dart/analysis/driver_based_analysis_context.dart';
 import 'package:analyzer/src/dart/analysis/file_content_cache.dart';
 import 'package:analyzer/src/dart/analysis/file_state.dart';
+import 'package:analyzer/src/dart/analysis/linked_summary_coordinator.dart';
 import 'package:analyzer/src/dart/analysis/status.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type_system.dart';
@@ -49,6 +52,7 @@ import 'package:analyzer_plugin/protocol/protocol.dart';
 import 'package:analyzer_plugin/protocol/protocol_common.dart' as protocol;
 import 'package:analyzer_plugin/protocol/protocol_constants.dart' as protocol;
 import 'package:analyzer_plugin/protocol/protocol_generated.dart' as protocol;
+import 'package:analyzer_plugin/src/channel/isolate_channel.dart';
 import 'package:analyzer_plugin/src/protocol/protocol_internal.dart';
 import 'package:meta/meta.dart';
 
@@ -73,6 +77,8 @@ class PluginServer {
   /// The communication channel being used to communicate with the analysis
   /// server.
   late PluginCommunicationChannel _channel;
+
+  LinkedSummaryCoordinator? _linkedSummaryCoordinator;
 
   final OverlayResourceProvider _resourceProvider;
 
@@ -326,6 +332,15 @@ class PluginServer {
     // TODO(srawlins): It seems improper for _this_ method to be the point where
     // the SDK path is configured...
     _sdkPath = parameters.sdkPath;
+    if (_channel case PluginIsolateChannel(:var startupCapabilities)) {
+      if (startupCapabilities?[LinkedSummaryCoordinator.capability] case [
+        LinkedSummaryCoordinator.protocolVersion,
+        AnalysisDriver.DATA_VERSION,
+        final SendPort port,
+      ]) {
+        _linkedSummaryCoordinator ??= LinkedSummaryCoordinator(port);
+      }
+    }
     return protocol.PluginVersionCheckResult(true, 'Plugin Server', '0.0.1', [
       '*.dart',
     ]);
@@ -662,6 +677,7 @@ class PluginServer {
       resourceProvider: _resourceProvider,
       includedPaths: includedPaths,
       byteStore: _byteStore,
+      linkedSummaryCoordinator: _linkedSummaryCoordinator,
       sdkPath: _sdkPath,
       fileContentCache: FileContentCache(_resourceProvider),
       configureAnalysisOptionsBuilder:
@@ -805,6 +821,7 @@ class PluginServer {
         _channel.sendResponse(
           protocol.PluginShutdownResult().toResponse(request.id, requestTime),
         );
+        _linkedSummaryCoordinator?.close();
         _channel.close();
         return null;
 
@@ -1261,7 +1278,7 @@ final class _LibraryDiagnosticsContext {
     ResourceProvider resourceProvider,
   ) {
     var fileState = analysisContext.driver.fsState.getFileForPath(libraryPath);
-    var libraryKind = fileState.kind.library ?? fileState.kind.asLibrary;
+    var libraryKind = fileState.kind.libraryForAnalysis;
 
     var allUnits = <RuleContextUnit>[];
     var diagnosticListeners = <RuleContextUnit, RecordingDiagnosticListener>{};

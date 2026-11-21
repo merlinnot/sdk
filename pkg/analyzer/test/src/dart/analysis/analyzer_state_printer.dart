@@ -342,7 +342,9 @@ class AnalyzerStatePrinter {
 
     sink.writelnWithIndent('fileTracker');
     sink.withIndent(() {
-      sink.writelnWithIndent('anyPendingFile: ${fileTracker.anyPendingFile}');
+      sink.writelnWithIndent(
+        'anyPendingFile: ${fileTracker.pendingFilesInAnalysisOrder.firstOrNull}',
+      );
       sink.writelnWithIndent(
         'numberOfPendingFiles: ${fileTracker.numberOfPendingFiles}',
       );

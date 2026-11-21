@@ -9,6 +9,8 @@ import 'dart:isolate';
 import 'package:analysis_server/src/session_logger/process_id.dart';
 import 'package:analysis_server/src/session_logger/session_listener.dart';
 import 'package:analyzer/instrumentation/instrumentation.dart';
+import 'package:analyzer/src/dart/analysis/driver.dart';
+import 'package:analyzer/src/dart/analysis/linked_summary_coordinator.dart';
 import 'package:analyzer_plugin/channel/channel.dart';
 import 'package:analyzer_plugin/protocol/protocol.dart';
 import 'package:analyzer_plugin/protocol/protocol_generated.dart';
@@ -50,12 +52,15 @@ final class ServerIsolateChannel implements ServerCommunicationChannel {
   /// The port used to receive notification when the plugin isolate has exited.
   ReceivePort? _exitPort;
 
+  final SendPort? linkedSummaryPort;
+
   new(
     this._pluginUri,
     this._packageConfigUri,
     this.instrumentationService,
-    this._sessionListener,
-  );
+    this._sessionListener, {
+    this.linkedSummaryPort,
+  });
 
   /// The ID of the plugin running in the isolate, used to identify the plugin
   /// to the instrumentation service.
@@ -166,7 +171,19 @@ final class ServerIsolateChannel implements ServerCommunicationChannel {
         to: ProcessId.plugin,
         message: jsonData,
       );
-      sendPort.send(jsonData);
+      if (linkedSummaryPort case var brokerPort?
+          when request.method == 'plugin.versionCheck') {
+        sendPort.send({
+          ...jsonData,
+          LinkedSummaryCoordinator.capability: [
+            LinkedSummaryCoordinator.protocolVersion,
+            AnalysisDriver.DATA_VERSION,
+            brokerPort,
+          ],
+        });
+      } else {
+        sendPort.send(jsonData);
+      }
     }
   }
 

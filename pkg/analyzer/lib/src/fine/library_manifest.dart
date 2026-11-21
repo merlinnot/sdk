@@ -1729,8 +1729,7 @@ class LibraryManifestHandle {
   ///
   /// Returns whether [ids] stay decoded.
   bool discardDecodedOnIdle({required bool endsPeriod}) {
-    assert(!_isBuilding);
-    _instance = null;
+    discardInstance();
     if (endsPeriod) {
       if (!(_idsRequested && _idsRequestedBefore)) {
         _ids = null;
@@ -1739,6 +1738,12 @@ class LibraryManifestHandle {
       _idsRequested = false;
     }
     return _ids != null;
+  }
+
+  /// Drops the full decoded manifest while preserving the IDs used by dependents.
+  void discardInstance() {
+    assert(!_isBuilding);
+    _instance = null;
   }
 
   /// Serializes the [instance] that the builder has filled, and its [ids].

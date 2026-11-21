@@ -20,6 +20,7 @@ import 'package:analysis_server/src/utilities/sdk.dart';
 import 'package:analyzer/dart/analysis/context_root.dart' as analyzer;
 import 'package:analyzer/exception/exception.dart';
 import 'package:analyzer/file_system/file_system.dart';
+import 'package:analyzer/src/dart/analysis/linked_summary_coordinator.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/util/file_paths.dart' as file_paths;
 import 'package:analyzer/src/util/glob.dart';
@@ -81,6 +82,8 @@ class PluginManager {
 
   /// The console environment key used by the pub tool.
   static const String _pubEnvironmentKey = 'PUB_ENVIRONMENT';
+
+  LinkedSummaryBroker? linkedSummaryBroker;
 
   /// The resource provider used to access the file system.
   final ResourceProvider _resourceProvider;
@@ -237,6 +240,9 @@ class PluginManager {
         _notificationManager,
         sessionListener,
         isLegacy: isLegacyPlugin,
+        linkedSummaryPort: isLegacyPlugin
+            ? null
+            : linkedSummaryBroker?.sendPort,
       );
       try {
         sessionListener.logInfo('Starting plugin "$pluginIsolate"');

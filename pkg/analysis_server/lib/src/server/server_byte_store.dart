@@ -6,8 +6,6 @@ import 'dart:typed_data';
 
 import 'package:analysis_server/src/utilities/timing_byte_store.dart';
 import 'package:analyzer/file_system/file_system.dart';
-import 'package:analyzer/file_system/overlay_file_system.dart';
-import 'package:analyzer/file_system/physical_file_system.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/dart/analysis/file_byte_store.dart'
     show EvictingFileByteStore;
@@ -165,6 +163,9 @@ class ServerByteStore {
   /// The timings of the on-disk byte store, or `null` if there is none.
   TimingByteStore? get timingByteStore => _timingByteStore;
 
+  /// Whether this server uses the file-per-entry store shared by the producer.
+  bool get usesFileByteStore => _fileByteStore != null;
+
   /// Flushes any pending single-file byte store entries.
   void flush() {
     _singleFileByteStore?.flush();
@@ -218,16 +219,10 @@ class ServerByteStore {
       );
     }
 
-    if (resourceProvider is OverlayResourceProvider) {
-      resourceProvider = resourceProvider.baseProvider;
-    }
-    var baseProvider = resourceProvider is TimingResourceProvider
-        ? resourceProvider.baseProvider
-        : resourceProvider;
-    if (baseProvider is PhysicalResourceProvider) {
+    if (resourceProvider.physicalStateProvider case var stateProvider?) {
       ByteStore? fileByteStore;
       if (useSingleFileByteStore) {
-        var folder = resourceProvider.getStateLocation('.analysis-cache');
+        var folder = stateProvider.getStateLocation('.analysis-cache');
         if (folder != null) {
           fileByteStore = _singleFileByteStore =
               SingleFileByteStore.inDirectory(
@@ -240,7 +235,7 @@ class ServerByteStore {
               );
         }
       } else {
-        var folder = resourceProvider.getStateLocation('.analysis-driver');
+        var folder = stateProvider.getStateLocation('.analysis-driver');
         if (folder != null) {
           fileByteStore = _fileByteStore = EvictingFileByteStore(
             folder.path,

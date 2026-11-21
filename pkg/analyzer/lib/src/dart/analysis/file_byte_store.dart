@@ -222,6 +222,8 @@ class FileByteStore implements ByteStore {
 
   final String _cachePath;
   final String _tempSuffix;
+  final bool synchronousWrites;
+  final Set<String> _createdShards = {};
   final Map<String, Uint8List> _writeInProgress = {};
   final FuturePool _pool = FuturePool(20);
   int _failedReadCount = 0;
@@ -233,9 +235,12 @@ class FileByteStore implements ByteStore {
 
   /// If the same cache path is used from more than one isolate of the same
   /// process, then a unique [tempNameSuffix] must be provided for each isolate.
-  new(this._cachePath, {String tempNameSuffix = ''})
-    : _tempSuffix =
-          '-temp-$pid${tempNameSuffix.isEmpty ? '' : '-$tempNameSuffix'}';
+  new(
+    this._cachePath, {
+    String tempNameSuffix = '',
+    this.synchronousWrites = false,
+  }) : _tempSuffix =
+           '-temp-$pid${tempNameSuffix.isEmpty ? '' : '-$tempNameSuffix'}';
 
   int get failedReadCount => _failedReadCount;
   int get failedWriteCount => _failedWriteCount;
@@ -299,20 +304,38 @@ class FileByteStore implements ByteStore {
 
     _writeCount++;
     _writeBytes += bytes.length;
-    _writeInProgress[key] = bytes;
-
     var wrappedBytes = _validator.wrapData(bytes);
+    var shard = _getShardPath(key);
+    var destination = join(shard, key);
+    var temporary = File(join(_cachePath, '$key$_tempSuffix'));
+    if (synchronousWrites) {
+      // A dedicated producer can finish the write before continuing. This
+      // avoids retaining the wrapped bytes in a queue of pending futures.
+      try {
+        if (_createdShards.add(shard)) {
+          Directory(shard).createSync(recursive: true);
+        }
+        temporary.writeAsBytesSync(wrappedBytes);
+        temporary.renameSync(destination);
+      } on FileSystemException {
+        _createdShards.remove(shard);
+        _failedWriteCount++;
+        try {
+          temporary.deleteSync();
+        } on FileSystemException {
+          // The temporary file might not have been created.
+        }
+      }
+      return bytes;
+    }
+    _writeInProgress[key] = bytes;
 
     // We don't wait for the write and rename to complete.
     _pool.execute(() async {
-      var tempPath = join(_cachePath, '$key$_tempSuffix');
-      var tempFile = File(tempPath);
       try {
-        await tempFile.writeAsBytes(wrappedBytes);
-        var shardPath = _getShardPath(key);
-        await Directory(shardPath).create(recursive: true);
-        var path = join(shardPath, key);
-        await tempFile.rename(path);
+        await temporary.writeAsBytes(wrappedBytes);
+        await Directory(shard).create(recursive: true);
+        await temporary.rename(destination);
       } catch (_) {
         // ignore exceptions
         _failedWriteCount++;

@@ -107,8 +107,7 @@ class _FakeAnalysisDriver implements AnalysisDriver {
     if (file == null) {
       return InvalidPathResult();
     }
-    var kind = file.kind;
-    var library = kind.library ?? kind.asLibrary;
+    var library = file.kind.libraryForAnalysis;
     var fragment = libraryContext.computeUnitElement(library, file);
     return UnitElementResultImpl(
       fragment: fragment,

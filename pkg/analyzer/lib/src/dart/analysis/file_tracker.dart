@@ -53,14 +53,6 @@ class FileTracker {
 
   new(this._logger, this._fsState, this._fileContentStrategy);
 
-  /// Returns the path to exactly one that needs analysis.
-  String? get anyPendingFile {
-    return _pendingChangedFiles.firstOrNull ??
-        _pendingImportFiles.firstOrNull ??
-        _pendingErrorFiles.firstOrNull ??
-        _pendingFiles.firstOrNull;
-  }
-
   /// Returns a boolean indicating whether there are any files that have
   /// changed, but for which the impact of the changes hasn't been measured.
   bool get hasChangedFiles => _changedFiles.isNotEmpty;
@@ -91,6 +83,14 @@ class FileTracker {
         _pendingImportFiles.length +
         _pendingErrorFiles.length +
         _pendingFiles.length;
+  }
+
+  /// Pending paths, highest analysis priority first.
+  Iterable<String> get pendingFilesInAnalysisOrder sync* {
+    yield* _pendingChangedFiles;
+    yield* _pendingImportFiles;
+    yield* _pendingErrorFiles;
+    yield* _pendingFiles;
   }
 
   /// Adds the given [path] to the set of "added files".

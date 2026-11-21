@@ -1252,35 +1252,21 @@ driver
 ''');
   }
 
-  // TODO(scheglov): Implement `asLibrary` testing.
-  test_libraryCycle_part() {
-    //     var a_path = convertPath('/aaa/lib/a.dart');
-    //     var b_path = convertPath('/aaa/lib/b.dart');
-    //
-    //     newFile(a_path, r'''
-    // part 'b.dart';
-    // ''');
-    //     newFile(b_path, r'''
-    // part of 'a.dart';
-    // ''');
-    //
-    //     var a_file = fileSystemState.getFileForPath(a_path);
-    //     var b_file = fileSystemState.getFileForPath(b_path);
-    //     _assertFilesWithoutLibraryCycle([a_file, b_file]);
-    //
-    //     // Compute the library cycle for 'a.dart', the library.
-    //     var a_libraryCycle = a_file.libraryCycle;
-    //     _assertFilesWithoutLibraryCycle([b_file]);
-    //
-    //     // The part 'b.dart' has its own library cycle.
-    //     // If the user chooses to import a part, it is a compile-time error.
-    //     // We could handle this in different ways:
-    //     // 1. Completely ignore an import of a file with a `part of` directive.
-    //     // 2. Treat such file as a library anyway.
-    //     // By giving a part its own library cycle we support (2).
-    //     var b_libraryCycle = b_file.libraryCycle;
-    //     expect(b_libraryCycle, isNot(same(a_libraryCycle)));
-    //     _assertFilesWithoutLibraryCycle([]);
+  test_libraryForAnalysis_part() {
+    var owner = newFile('$testPackageLibPath/owner.dart', "part 'child.dart';");
+    var child = newFile(
+      '$testPackageLibPath/child.dart',
+      "part of 'owner.dart';",
+    );
+    var orphan = newFile('$testPackageLibPath/orphan.dart', 'part of missing;');
+    var ownerKind = fileStateFor(owner).kind.libraryForAnalysis;
+    expect(ownerKind.files.map((file) => file.path), contains(child.path));
+    expect(fileStateFor(child).kind.libraryForAnalysis, same(ownerKind));
+    var orphanKind = fileStateFor(orphan).kind;
+    expect(orphanKind.library, isNull);
+    var recovered = orphanKind.libraryForAnalysis;
+    expect(recovered.file, same(orphanKind.file));
+    expect(recovered.recoveredFrom, same(orphanKind));
   }
 
   test_newFile_doesNotExist() {
